@@ -18,16 +18,15 @@ def check_hdf5(dataset_path):
     hdf5_files = [str(file.resolve()) for file in Path(dataset_path).rglob('*.hdf5')]
     check_hdf5_structure(hdf5_files[0])
 
-def build_dataset_statistics(dataset_path, cache_json_name='cache.json', obs_keys=['observation/third_image'], 
+def build_dataset_statistics(dataset_path, cache_json='cache.json', obs_keys=['observation/third_image'], 
                              action_key='action', proprio_key='proprio', lang_key='language_instruction', control_type='rel_eef'):
-    cache_json = osp.join(dataset_path, cache_json_name)
     if osp.isfile(cache_json):
         print('dataset statistics exits')
         dataset_statistics = json.load(open(cache_json, 'r'))
     else :
         print('Beginning to build dataset statistics...')
         hdf5_files = [str(file.resolve()) for file in Path(dataset_path).rglob('*.hdf5')]
-        traj_lens = []
+        traj_paths = []
         proprios = []
         actions = []
         # check all data
@@ -38,7 +37,7 @@ def build_dataset_statistics(dataset_path, cache_json_name='cache.json', obs_key
                 traj_proprios = f[proprio_key][()].astype('float32') if proprio_key else np.zeros((traj_length, 7))
                 actions.append(traj_actions)
                 proprios.append(traj_proprios)
-                traj_lens.append(traj_length)
+                traj_paths.append((file, traj_length))
                 
 
         # calculate statistics
@@ -48,11 +47,12 @@ def build_dataset_statistics(dataset_path, cache_json_name='cache.json', obs_key
         action_min = np.quantile(actions, 0.01, axis=0).tolist()
         proprio_max = np.quantile(proprios, 0.99, axis=0).tolist()
         proprio_min = np.quantile(proprios, 0.01, axis=0).tolist()
-        dataset_statistics = dict(obs_keys=obs_keys, control_type=control_type,
+        dataset_statistics = dict(dataset_path=dataset_path,
+                                  obs_keys=obs_keys, control_type=control_type,
                                   action_key=action_key, proprio_key=proprio_key, lang_key=lang_key,
                                   action_max=action_max, action_min=action_min,
                                   proprio_max = proprio_max, proprio_min = proprio_min, 
-                                  traj_paths=hdf5_files, traj_lens=traj_lens)
+                                  traj_paths=traj_paths)
         with open(cache_json, 'w') as f:
             json.dump(dataset_statistics, f, indent=4)
     return dataset_statistics
@@ -66,7 +66,8 @@ def build_statistics(config):
         action_key='action'
         proprio_key='proprio'
         control_type='rel_eef'
-        build_dataset_statistics(config['dataset_root'], obs_keys=obs_keys, control_type=control_type,
+        build_dataset_statistics(config['dataset_root'], cache_json='assets/metas/libero.json',
+                                obs_keys=obs_keys, control_type=control_type,
                                 action_key=action_key, proprio_key=proprio_key)
         print('ok')
     elif 'calvin' in config['dataset_root']:
@@ -76,7 +77,8 @@ def build_statistics(config):
         action_key='rel_action'
         proprio_key='proprio'
         control_type='rel_eef'
-        build_dataset_statistics(config['dataset_root'], obs_keys=obs_keys, control_type=control_type,
+        build_dataset_statistics(config['dataset_root'], cache_json='assets/metas/calvin.json',
+                                 obs_keys=obs_keys, control_type=control_type,
                                 action_key=action_key, proprio_key=proprio_key)
         print('ok')
     elif 'simpler' in config['dataset_root']:
@@ -86,7 +88,8 @@ def build_statistics(config):
             action_key='action'
             proprio_key='proprio'
             control_type='rel_eef'
-            build_dataset_statistics(config['dataset_root'], obs_keys=obs_keys, control_type=control_type,
+            build_dataset_statistics(config['dataset_root'], cache_json='assets/metas/simpler_bridge.json',
+                                     obs_keys=obs_keys, control_type=control_type,
                                     action_key=action_key, proprio_key=proprio_key)
             print('ok')
         elif 'rt1' in config['dataset_root']:
@@ -95,7 +98,8 @@ def build_statistics(config):
             action_key='action'
             proprio_key=None
             control_type='rel_eef'
-            build_dataset_statistics(config['dataset_root'], obs_keys=obs_keys, control_type=control_type,
+            build_dataset_statistics(config['dataset_root'], cache_json='assets/metas/simpler_rt1.json',
+                                     obs_keys=obs_keys, control_type=control_type,
                                     action_key=action_key, proprio_key=proprio_key)
             print('ok')
     elif 'VLABench' in config['dataset_root']:
@@ -106,7 +110,8 @@ def build_statistics(config):
         action_key='action'
         proprio_key='proprio'
         control_type='abs_eef'
-        build_dataset_statistics(config['dataset_root'], obs_keys=obs_keys, control_type=control_type,
+        build_dataset_statistics(config['dataset_root'], cache_json='assets/metas/VLABench.json',
+                                 obs_keys=obs_keys, control_type=control_type,
                                 action_key=action_key, proprio_key=proprio_key)
         print('ok')
     elif 'RoboTwin' in config['dataset_root']:
@@ -117,7 +122,8 @@ def build_statistics(config):
         action_key='joint_action'
         proprio_key='proprio'
         control_type='abs_joint'
-        build_dataset_statistics(config['dataset_root'], obs_keys=obs_keys, control_type=control_type,
+        build_dataset_statistics(config['dataset_root'], cache_json='assets/metas/RoboTwin.json',
+                                 obs_keys=obs_keys, control_type=control_type,
                                 action_key=action_key, proprio_key=proprio_key)
     elif 'RoboCasa' in config['dataset_root']:
         print('processing robocasa data...')
@@ -127,7 +133,8 @@ def build_statistics(config):
         action_key='actions_abs'
         proprio_key='obs/robot0_joint_pos'
         control_type='abs_eef'
-        build_dataset_statistics(config['dataset_root'], obs_keys=obs_keys, control_type=control_type,
+        build_dataset_statistics(config['dataset_root'], cache_json='assets/metas/RoboCasa.json',
+                                 obs_keys=obs_keys, control_type=control_type,
                                 action_key=action_key, proprio_key=proprio_key)
         print('ok')
     else:
@@ -141,6 +148,5 @@ if __name__ == '__main__':
     files = os.listdir('assets/data')
     for file in files:
         config = dict(dataset_root=os.path.join('assets/data', file))
-        os.remove(os.path.join('assets/data', file, 'cache.json'))
         build_statistics(config)
         

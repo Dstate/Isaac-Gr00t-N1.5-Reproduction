@@ -21,12 +21,33 @@ from gr00t.model.transforms import GR00TTransform
 from gr00t.data.schema import EmbodimentTag
 from gr00t.model.transforms import DefaultDataCollator
 
+class RandomCropRatio(A.ImageOnlyTransform):
+    """Randomly crop a region of the input image according to a specified ratio.
 
-def build_dataset_statistics(dataset_path, cache_json_name='cache.json'):
-    cache_json = osp.join(dataset_path, cache_json_name)
-    assert osp.isfile(cache_json), 'dataset statistics don\'t exit'
-    dataset_statistics = json.load(open(cache_json, 'r'))
-    return dataset_statistics
+    Args:
+        ratio (float): Crop ratio relative to the original image size (0 < ratio <= 1).
+        p (float): Probability of applying the transform. Default: 1.0.
+        always_apply (bool | None): If True, always apply this transform.
+    """
+
+    def __init__(self, ratio: float = 0.95, p: float = 1.0, always_apply: bool | None = None):
+        super().__init__(p=p, always_apply=always_apply)
+        if not 0 < ratio <= 1.0:
+            raise ValueError("ratio must be in (0, 1]")
+        self.ratio = ratio
+
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
+        return ("ratio",)
+
+    def apply(self, img, **params):
+        h, w = img.shape[:2]
+        new_h, new_w = int(h*self.ratio), int(w*self.ratio)
+        y_min = np.random.randint(0, h - new_h + 1)
+        x_min = np.random.randint(0, w - new_w + 1)
+        y_max = y_min + new_h
+        x_max = x_min + new_w
+        return img[y_min:y_max, x_min:x_max]
+
 
 def build_base_transform(n_px, aug=True, 
                         crop_scale=0.95, crop_prob=1.0, 
@@ -38,7 +59,7 @@ def build_base_transform(n_px, aug=True,
     # augmentation and resize
     
     if aug:
-        base_transform.append(A.RandomCrop(height=int(n_px*crop_scale), width=int(n_px*crop_scale), p=crop_prob))
+        base_transform.append(RandomCropRatio(ratio=crop_scale, p=crop_prob))
         base_transform.append(A.ColorJitter(brightness=jitter_bright, contrast=jitter_contrast, 
                                             saturation=jitter_saturation, hue=jitter_hue, p=jitter_prob))
     else :
@@ -51,8 +72,9 @@ def build_base_transform(n_px, aug=True,
 
 
 class ProcessorGroot(object):
-    def __init__(self, dataset_path, training=True, eps=1e-6):
-        dataset_statistics = build_dataset_statistics(dataset_path)
+    def __init__(self, meta_file_path, training=True, eps=1e-6):
+        assert osp.isfile(meta_file_path), 'dataset statistics don\'t exit'
+        dataset_statistics = json.load(open(meta_file_path, 'r'))
         self.dataset_statistics = dataset_statistics
         self.action_max = np.array(dataset_statistics['action_max'])
         self.action_min = np.array(dataset_statistics['action_min'])
@@ -127,15 +149,14 @@ class UniDataset(Dataset):
     def _load_metas(self):
         dataset_statistics = self.processor.dataset_statistics
         traj_paths = dataset_statistics['traj_paths']
-        traj_lens = dataset_statistics['traj_lens']
         self.obs_keys = dataset_statistics['obs_keys']
         self.lang_key = dataset_statistics['lang_key']
         self.action_key = dataset_statistics['action_key']
         self.proprio_key = dataset_statistics['proprio_key']
         self.control_type = dataset_statistics['control_type']
         self.metas = []
-        for i in range(len(traj_paths)):
-            self.metas.extend([(traj_paths[i], j) for j in range(traj_lens[i])])
+        for traj_path, traj_lengh in traj_paths:
+            self.metas.extend([(traj_path, j) for j in range(traj_lengh)])
 
     def _load_from_raw_traj(self, traj_path, cur_idx):
         with h5py.File(traj_path, 'r') as f:
@@ -271,18 +292,18 @@ class UniAgent(object):
         self.app.post("/info")(self.info_query)
         uvicorn.run(self.app, host=host, port=port)
 
-def build_uni_dataloader(dataset_path, batch_size=2, num_workers=2, 
+def build_uni_dataloader(meta_file_path, batch_size=2, num_workers=2, 
                         shuffle=True, pin_mem=True, drop_last=True, 
                         world_size=1, global_rank=0, **kwargs):
     
-    processor = ProcessorGroot(dataset_path)
+    processor = ProcessorGroot(meta_file_path)
     train_dataset = UniDataset(processor=processor)
     sampler = DistributedSampler(train_dataset, shuffle=shuffle, num_replicas=world_size, rank=global_rank) 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers,
                                  sampler=sampler, pin_memory=pin_mem, drop_last=drop_last, collate_fn=DefaultDataCollator())
     return train_dataloader
 
-def build_uni_server(dataset_path, **kwargs):
-    processor = ProcessorGroot(dataset_path, training=False)
+def build_uni_server(meta_file_path, **kwargs):
+    processor = ProcessorGroot(meta_file_path, training=False)
     agent = UniAgent(processor)
     return agent
